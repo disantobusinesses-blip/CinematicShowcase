@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Design tokens — Step 3, never deviate */
+  --background: #0A0A0A;
+  --text-primary: #F5F0E8;
+  --text-body: #E5E5E5;
+  --gold: #C9A84C;
+  --gold-hover: #E8C98E;
+  --muted: #888888;
+  --surface: #111111;
+  --border-gold: rgba(201, 168, 76, 0.2);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #000000;
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  font-family: var(--font-body), sans-serif;
+  font-weight: 300;
+}
+
+/* Reusable label style — Inter 0.65rem, letter-spacing 0.25em, uppercase, gold */
+.label {
+  font-family: var(--font-body), sans-serif;
+  font-size: 0.65rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--gold);
+  font-weight: 500;
+}
+
+.font-display {
+  font-family: var(--font-display), serif;
+}
+
+.font-body {
+  font-family: var(--font-body), sans-serif;
+}
+
+::selection {
+  background: var(--gold);
+  color: #0A0A0A;
+}
+
+/* Hide the desktop step connector when steps stack on mobile */
+@media (max-width: 767px) {
+  .step-connector {
+    display: none !important;
+  }
+}
