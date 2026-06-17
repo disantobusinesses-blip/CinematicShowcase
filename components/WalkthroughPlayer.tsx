@@ -1,332 +1,288 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
+// One continuous cinematic walk-through, stitched from 9 Kling transitions
+// (room 1 -> 2 -> ... -> 10) and exported to a scroll-scrubbed frame sequence.
+const FRAME_COUNT = 363;
+const framePath = (i: number) =>
+  `/frames/frame-${String(i).padStart(4, "0")}.jpg`;
+
+// How many viewport-heights of scrolling the whole walk-through spans.
+const SCROLL_VH = 600;
+
+// Rooms are evenly spaced across the walk-through; index i sits at progress i/9.
 const ROOMS = [
-  { src: "/images/room-01.jpg", name: "Exterior" },
-  { src: "/images/room-02.jpg", name: "Entry Foyer" },
-  { src: "/images/room-03.jpg", name: "Living Room" },
-  { src: "/images/room-04.jpg", name: "Kitchen" },
-  { src: "/images/room-05.jpg", name: "Dining" },
-  { src: "/images/room-06.jpg", name: "Master Bedroom" },
-  { src: "/images/room-07.jpg", name: "Ensuite" },
-  { src: "/images/room-08.jpg", name: "Home Theatre" },
-  { src: "/images/room-09.jpg", name: "Alfresco" },
-  { src: "/images/room-10.jpg", name: "Pool at Dusk" },
+  "Exterior",
+  "Entry Foyer",
+  "Living Room",
+  "Kitchen",
+  "Dining",
+  "Master Bedroom",
+  "Ensuite",
+  "Home Theatre",
+  "Alfresco",
+  "Pool at Dusk",
 ];
 
-const ADVANCE_MS = 5000;
+const clamp = (v: number, lo: number, hi: number) =>
+  Math.min(hi, Math.max(lo, v));
 
 export default function WalkthroughPlayer() {
-  const [currentRoom, setCurrentRoom] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imagesRef = useRef<HTMLImageElement[]>([]);
+  const rafRef = useRef<number | null>(null);
+  const lastFrameRef = useRef<number>(-1);
 
-  // Detect mobile (below 768px) — disables Ken Burns for performance.
+  const [loaded, setLoaded] = useState(false);
+  const [loadPct, setLoadPct] = useState(0);
+  const [progress, setProgress] = useState(0);
+
+  // Draw a single frame to the canvas using object-cover maths.
+  const drawFrame = useCallback((idx: number) => {
+    const canvas = canvasRef.current;
+    const img = imagesRef.current[idx];
+    if (!canvas || !img || !img.complete || img.naturalWidth === 0) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const ir = img.naturalWidth / img.naturalHeight;
+    const cr = cw / ch;
+    let dw: number, dh: number, dx: number, dy: number;
+    if (cr > ir) {
+      dw = cw;
+      dh = cw / ir;
+      dx = 0;
+      dy = (ch - dh) / 2;
+    } else {
+      dh = ch;
+      dw = ch * ir;
+      dy = 0;
+      dx = (cw - dw) / 2;
+    }
+    ctx.drawImage(img, dx, dy, dw, dh);
+  }, []);
+
+  // Size the canvas to the viewport (device-pixel sharp).
+  const sizeCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(window.innerWidth * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = window.innerHeight + "px";
+    if (lastFrameRef.current >= 0) drawFrame(lastFrameRef.current);
+  }, [drawFrame]);
+
+  // Preload the full frame sequence, reporting progress.
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 768);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
+    let done = 0;
+    let cancelled = false;
+    const imgs: HTMLImageElement[] = new Array(FRAME_COUNT);
+    const onOne = () => {
+      done += 1;
+      if (cancelled) return;
+      setLoadPct(done / FRAME_COUNT);
+      if (done === FRAME_COUNT) setLoaded(true);
+    };
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      const img = new Image();
+      img.onload = onOne;
+      img.onerror = onOne;
+      img.src = framePath(i + 1);
+      imgs[i] = img;
+      // Paint the very first frame as soon as it arrives.
+      if (i === 0) {
+        img.onload = () => {
+          onOne();
+          if (!cancelled) {
+            lastFrameRef.current = 0;
+            drawFrame(0);
+          }
+        };
+      }
+    }
+    imagesRef.current = imgs;
+    return () => {
+      cancelled = true;
+    };
+  }, [drawFrame]);
 
-  const next = useCallback(() => {
-    setCurrentRoom((r) => (r + 1) % ROOMS.length);
-  }, []);
+  // Scroll -> progress -> frame, throttled to animation frames.
+  useEffect(() => {
+    const update = () => {
+      rafRef.current = null;
+      const spacer = spacerRef.current;
+      if (!spacer) return;
+      const rect = spacer.getBoundingClientRect();
+      const total = rect.height - window.innerHeight;
+      const scrolled = clamp(-rect.top, 0, total);
+      const p = total > 0 ? scrolled / total : 0;
+      setProgress(p);
+      const idx = clamp(Math.round(p * (FRAME_COUNT - 1)), 0, FRAME_COUNT - 1);
+      if (idx !== lastFrameRef.current) {
+        lastFrameRef.current = idx;
+        drawFrame(idx);
+      }
+    };
+    const onScroll = () => {
+      if (rafRef.current == null) rafRef.current = requestAnimationFrame(update);
+    };
+    sizeCanvas();
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", sizeCanvas);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", sizeCanvas);
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    };
+  }, [drawFrame, sizeCanvas]);
 
-  const prev = useCallback(() => {
-    setCurrentRoom((r) => (r - 1 + ROOMS.length) % ROOMS.length);
-  }, []);
+  // Redraw current frame once everything has loaded.
+  useEffect(() => {
+    if (loaded && lastFrameRef.current >= 0) drawFrame(lastFrameRef.current);
+  }, [loaded, drawFrame]);
 
-  const start = useCallback(() => {
-    setCurrentRoom(0);
-    setHasStarted(true);
-    setIsPlaying(true);
+  // Keyboard: arrows nudge the scroll along the walk-through.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const step = window.innerHeight * 0.9;
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        e.preventDefault();
+        window.scrollBy({ top: step, behavior: "smooth" });
+      } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        window.scrollBy({ top: -step, behavior: "smooth" });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  const togglePlay = useCallback(() => {
-    if (!hasStarted) return;
-    setIsPlaying((p) => !p);
-  }, [hasStarted]);
 
   const scrollToEnquire = useCallback(() => {
     document.getElementById("enquire")?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  // Auto-advance every 5s while playing.
-  useEffect(() => {
-    if (!hasStarted || !isPlaying) return;
-    const t = setTimeout(next, ADVANCE_MS);
-    return () => clearTimeout(t);
-  }, [hasStarted, isPlaying, currentRoom, next]);
-
-  // Keyboard controls: arrows navigate, space toggles play/pause.
-  useEffect(() => {
-    if (!hasStarted) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight") {
-        e.preventDefault();
-        next();
-      } else if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        prev();
-      } else if (e.key === " " || e.code === "Space") {
-        e.preventDefault();
-        togglePlay();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [hasStarted, next, prev, togglePlay]);
-
-  const progress = (currentRoom + 1) / ROOMS.length;
+  const activeRoom = clamp(Math.round(progress * (ROOMS.length - 1)), 0, ROOMS.length - 1);
+  const introOpacity = clamp(1 - progress / 0.07, 0, 1);
+  const uiVisible = progress < 0.999;
 
   return (
-    <div
-      ref={containerRef}
-      onClick={() => hasStarted && next()}
-      style={{
-        position: "fixed",
-        inset: 0,
-        width: "100vw",
-        height: "100vh",
-        overflow: "hidden",
-        background: "#000",
-        cursor: hasStarted ? "pointer" : "default",
-        zIndex: 10,
-      }}
-    >
-      {/* Image stack — all absolute inset 0, crossfade via opacity */}
-      {ROOMS.map((room, i) => {
-        const isActive = i === currentRoom;
-        return (
-          <motion.div
-            key={room.src}
-            initial={false}
-            animate={{ opacity: isActive ? 1 : 0 }}
-            transition={{ duration: 1.2, ease: "easeInOut" }}
-            style={{ position: "absolute", inset: 0 }}
-          >
-            <motion.div
-              key={`kb-${i}-${isActive}`}
-              initial={{ scale: 1 }}
-              animate={{ scale: isActive && !isMobile ? 1.08 : 1 }}
-              transition={
-                isActive && !isMobile
-                  ? { duration: 6, ease: "linear", repeat: Infinity, repeatType: "reverse" }
-                  : { duration: 0 }
-              }
-              style={{ position: "absolute", inset: 0 }}
-            >
-              <Image
-                src={room.src}
-                alt={room.name}
-                fill
-                priority={i === 0}
-                sizes="100vw"
-                style={{ objectFit: "cover" }}
-              />
-            </motion.div>
-          </motion.div>
-        );
-      })}
+    <>
+      {/* In-flow element that provides the scroll distance for the walk-through */}
+      <div ref={spacerRef} style={{ height: `${SCROLL_VH}vh` }} aria-hidden />
 
-      {/* Subtle vignette for UI legibility */}
+      {/* Fixed visual layer — the scrubbed canvas sits behind the page content */}
       <div
         style={{
-          position: "absolute",
+          position: "fixed",
           inset: 0,
-          pointerEvents: "none",
-          background:
-            "linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 25%, rgba(0,0,0,0) 60%, rgba(0,0,0,0.55) 100%)",
+          width: "100vw",
+          height: "100vh",
+          overflow: "hidden",
+          background: "#000",
+          zIndex: 10,
         }}
-      />
+      >
+        <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
 
-      {/* Centre-bottom room label */}
-      {hasStarted && (
+        {/* Vignette for UI legibility */}
         <div
           style={{
             position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: isMobile ? 90 : 64,
-            display: "flex",
-            justifyContent: "center",
+            inset: 0,
             pointerEvents: "none",
+            background:
+              "linear-gradient(to bottom, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 58%, rgba(0,0,0,0.6) 100%)",
           }}
-        >
-          <AnimatePresence mode="wait">
+        />
+
+        {/* Loading overlay */}
+        <AnimatePresence>
+          {!loaded && (
             <motion.div
-              key={currentRoom}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.6, ease: "easeInOut" }}
+              initial={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.8, ease: "easeInOut" }}
               style={{
-                fontFamily: "var(--font-display), serif",
-                fontStyle: "italic",
-                fontSize: 28,
-                color: "#F5F0E8",
-                padding: "0.35em 1.4em",
-                borderRadius: 4,
-                background: "rgba(0,0,0,0.5)",
+                position: "absolute",
+                inset: 0,
+                background: "#0A0A0A",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                padding: "0 24px",
               }}
             >
-              {ROOMS[currentRoom].name}
+              <div
+                style={{
+                  fontFamily: "var(--font-body), sans-serif",
+                  fontSize: 11,
+                  letterSpacing: "0.25em",
+                  textTransform: "uppercase",
+                  color: "var(--gold)",
+                  fontWeight: 500,
+                  marginBottom: 22,
+                }}
+              >
+                PREPARING CINEMATIC WALKTHROUGH
+              </div>
+              <div
+                style={{
+                  width: 220,
+                  height: 2,
+                  background: "rgba(201,168,76,0.18)",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: "100%",
+                    background: "var(--gold)",
+                    transformOrigin: "left center",
+                    transform: `scaleX(${loadPct})`,
+                    transition: "transform 0.2s linear",
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  fontFamily: "var(--font-body), sans-serif",
+                  fontSize: 12,
+                  color: "var(--muted)",
+                  fontWeight: 300,
+                  marginTop: 16,
+                }}
+              >
+                {Math.round(loadPct * 100)}%
+              </div>
             </motion.div>
-          </AnimatePresence>
-        </div>
-      )}
+          )}
+        </AnimatePresence>
 
-      {/* Walkthrough UI — shown once started */}
-      {hasStarted && (
-        <>
-          {/* Top left brand */}
+        {/* Intro overlay — fades as the walk begins */}
+        {loaded && introOpacity > 0.01 && (
           <div
-            style={{
-              position: "absolute",
-              top: isMobile ? 80 : 88,
-              left: isMobile ? 18 : 32,
-              fontFamily: "var(--font-body), sans-serif",
-              fontSize: 11,
-              letterSpacing: "0.25em",
-              textTransform: "uppercase",
-              color: "var(--gold)",
-              fontWeight: 500,
-              pointerEvents: "none",
-            }}
-          >
-            IAS BUILD SHOWCASE
-          </div>
-
-          {/* Top right room name */}
-          <div
-            style={{
-              position: "absolute",
-              top: isMobile ? 108 : 92,
-              right: isMobile ? 18 : 32,
-              fontFamily: "var(--font-body), sans-serif",
-              fontSize: 13,
-              color: "var(--muted)",
-              fontWeight: 300,
-              pointerEvents: "none",
-            }}
-          >
-            {ROOMS[currentRoom].name}
-          </div>
-
-          {/* Bottom progress bar */}
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 2,
-              background: "rgba(201,168,76,0.15)",
-            }}
-          >
-            <motion.div
-              animate={{ scaleX: progress }}
-              transition={{ duration: 0.8, ease: [0.25, 0, 0, 1] }}
-              style={{
-                height: "100%",
-                width: "100%",
-                transformOrigin: "left center",
-                background: "var(--gold)",
-              }}
-            />
-          </div>
-
-          {/* Bottom left play/pause toggle */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              togglePlay();
-            }}
-            aria-label={isPlaying ? "Pause walkthrough" : "Play walkthrough"}
-            style={{
-              position: "absolute",
-              bottom: isMobile ? 22 : 28,
-              left: isMobile ? 18 : 32,
-              width: 44,
-              height: 44,
-              borderRadius: "50%",
-              border: "1px solid var(--border-gold)",
-              background: "rgba(0,0,0,0.4)",
-              color: "var(--gold)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-            }}
-          >
-            {isPlaying ? (
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-                <rect x="2" y="1" width="3.5" height="12" rx="1" />
-                <rect x="8.5" y="1" width="3.5" height="12" rx="1" />
-              </svg>
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-                <path d="M3 1.5v11l9-5.5z" />
-              </svg>
-            )}
-          </button>
-
-          {/* Bottom right skip to enquire */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              scrollToEnquire();
-            }}
-            style={{
-              position: "absolute",
-              bottom: isMobile ? 22 : 30,
-              right: isMobile ? 18 : 32,
-              fontFamily: "var(--font-body), sans-serif",
-              fontSize: 11,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
-              color: "var(--gold)",
-              fontWeight: 500,
-              background: "transparent",
-              border: "1px solid var(--border-gold)",
-              padding: "0.7em 1.4em",
-              borderRadius: 2,
-              cursor: "pointer",
-            }}
-          >
-            Skip to Enquire
-          </button>
-        </>
-      )}
-
-      {/* Play overlay — shown before start */}
-      <AnimatePresence>
-        {!hasStarted && (
-          <motion.div
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.6, ease: "easeInOut" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              start();
-            }}
             style={{
               position: "absolute",
               inset: 0,
-              background: "rgba(0,0,0,0.7)",
+              background: `rgba(0,0,0,${0.55 * introOpacity})`,
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
               textAlign: "center",
               padding: "0 24px",
-              cursor: "pointer",
+              opacity: introOpacity,
+              pointerEvents: "none",
             }}
           >
             <div
@@ -347,7 +303,7 @@ export default function WalkthroughPlayer() {
                 fontFamily: "var(--font-display), serif",
                 fontStyle: "italic",
                 fontWeight: 400,
-                fontSize: isMobile ? 52 : 80,
+                fontSize: "clamp(48px, 8vw, 80px)",
                 lineHeight: 1.05,
                 color: "#F5F0E8",
                 marginBottom: 18,
@@ -358,38 +314,161 @@ export default function WalkthroughPlayer() {
             <p
               style={{
                 fontFamily: "var(--font-body), sans-serif",
-                fontSize: isMobile ? 15 : 17,
+                fontSize: "clamp(14px, 2vw, 17px)",
                 color: "var(--muted)",
                 fontWeight: 300,
                 marginBottom: 40,
                 maxWidth: 480,
               }}
             >
-              A fully finished luxury home. Room by room.
+              A fully finished luxury home. One continuous walk, room by room.
             </p>
-            <motion.button
-              whileHover={{ scale: 1.06, borderColor: "var(--gold-hover)" }}
-              whileTap={{ scale: 0.97 }}
-              aria-label="Play cinematic walkthrough"
+            <motion.div
+              animate={{ y: [0, 10, 0] }}
+              transition={{ duration: 1.8, ease: "easeInOut", repeat: Infinity }}
               style={{
-                width: 96,
-                height: 96,
-                borderRadius: "50%",
-                border: "1.5px solid var(--gold)",
-                background: "rgba(0,0,0,0.25)",
+                fontFamily: "var(--font-body), sans-serif",
+                fontSize: 11,
+                letterSpacing: "0.25em",
+                textTransform: "uppercase",
+                color: "var(--gold)",
+                fontWeight: 500,
                 display: "flex",
+                flexDirection: "column",
                 alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
+                gap: 10,
               }}
             >
-              <svg width="34" height="34" viewBox="0 0 34 34" fill="var(--gold)">
-                <path d="M11 7v20l16-10z" />
+              Scroll to explore
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="var(--gold)" strokeWidth="1.5">
+                <path d="M9 3v12M4 10l5 5 5-5" />
               </svg>
-            </motion.button>
-          </motion.div>
+            </motion.div>
+          </div>
         )}
-      </AnimatePresence>
-    </div>
+
+        {/* Walk-through UI — visible while scrubbing */}
+        {loaded && uiVisible && (
+          <>
+            {/* Top left brand */}
+            <div
+              style={{
+                position: "absolute",
+                top: 88,
+                left: "clamp(18px, 4vw, 32px)",
+                fontFamily: "var(--font-body), sans-serif",
+                fontSize: 11,
+                letterSpacing: "0.25em",
+                textTransform: "uppercase",
+                color: "var(--gold)",
+                fontWeight: 500,
+                opacity: 1 - introOpacity,
+                pointerEvents: "none",
+              }}
+            >
+              IAS BUILD SHOWCASE
+            </div>
+
+            {/* Top right room name */}
+            <div
+              style={{
+                position: "absolute",
+                top: 88,
+                right: "clamp(18px, 4vw, 32px)",
+                fontFamily: "var(--font-body), sans-serif",
+                fontSize: 13,
+                color: "var(--muted)",
+                fontWeight: 300,
+                opacity: 1 - introOpacity,
+                pointerEvents: "none",
+              }}
+            >
+              {ROOMS[activeRoom]}
+            </div>
+
+            {/* Centre-bottom room label */}
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 70,
+                display: "flex",
+                justifyContent: "center",
+                pointerEvents: "none",
+                opacity: 1 - introOpacity,
+              }}
+            >
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activeRoom}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                  style={{
+                    fontFamily: "var(--font-display), serif",
+                    fontStyle: "italic",
+                    fontSize: 28,
+                    color: "#F5F0E8",
+                    padding: "0.35em 1.4em",
+                    borderRadius: 4,
+                    background: "rgba(0,0,0,0.5)",
+                  }}
+                >
+                  {ROOMS[activeRoom]}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+
+            {/* Bottom progress bar */}
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 2,
+                background: "rgba(201,168,76,0.15)",
+              }}
+            >
+              <div
+                style={{
+                  height: "100%",
+                  width: "100%",
+                  transformOrigin: "left center",
+                  transform: `scaleX(${progress})`,
+                  background: "var(--gold)",
+                }}
+              />
+            </div>
+
+            {/* Bottom right skip to enquire */}
+            <button
+              onClick={scrollToEnquire}
+              style={{
+                position: "absolute",
+                bottom: 26,
+                right: "clamp(18px, 4vw, 32px)",
+                fontFamily: "var(--font-body), sans-serif",
+                fontSize: 11,
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                color: "var(--gold)",
+                fontWeight: 500,
+                background: "rgba(0,0,0,0.35)",
+                border: "1px solid var(--border-gold)",
+                padding: "0.7em 1.4em",
+                borderRadius: 2,
+                cursor: "pointer",
+                opacity: 1 - introOpacity,
+              }}
+            >
+              Skip to Enquire
+            </button>
+          </>
+        )}
+      </div>
+    </>
   );
 }

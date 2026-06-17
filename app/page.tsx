@@ -11,13 +11,10 @@ export default function Home() {
     <main style={{ background: "#0A0A0A" }}>
       <Navbar />
 
-      {/* Fixed cinematic walkthrough sits behind the scrolling content */}
+      {/* Scroll-scrubbed cinematic walkthrough — provides its own scroll height */}
       <WalkthroughPlayer />
 
-      {/* Spacer reveals the fixed walkthrough before content scrolls over it */}
-      <div style={{ height: "100vh" }} aria-hidden />
-
-      {/* Content layer scrolls up over the fixed player */}
+      {/* Content layer scrolls up over the fixed walkthrough canvas */}
       <div style={{ position: "relative", zIndex: 20, background: "#0A0A0A" }}>
         <WhatYouAreSeeing />
         <HowItWorks />
