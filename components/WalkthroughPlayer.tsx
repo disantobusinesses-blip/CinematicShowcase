@@ -33,7 +33,6 @@ export default function WalkthroughPlayer() {
   const spacerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imagesRef = useRef<HTMLImageElement[]>([]);
-  const rafRef = useRef<number | null>(null);
   const lastFrameRef = useRef<number>(-1);
 
   const [loaded, setLoaded] = useState(false);
@@ -83,11 +82,14 @@ export default function WalkthroughPlayer() {
     let done = 0;
     let cancelled = false;
     const imgs: HTMLImageElement[] = new Array(FRAME_COUNT);
+    // Reveal once most frames are ready (the rest stream in), so a single
+    // stalled request can never lock the site behind the loader.
+    const READY_AT = Math.ceil(FRAME_COUNT * 0.9);
     const onOne = () => {
       done += 1;
       if (cancelled) return;
       setLoadPct(done / FRAME_COUNT);
-      if (done === FRAME_COUNT) setLoaded(true);
+      if (done >= READY_AT) setLoaded(true);
     };
     for (let i = 0; i < FRAME_COUNT; i++) {
       const img = new Image();
@@ -107,15 +109,19 @@ export default function WalkthroughPlayer() {
       }
     }
     imagesRef.current = imgs;
+    // Hard fallback: never keep the loader up longer than 12s.
+    const fallback = setTimeout(() => {
+      if (!cancelled) setLoaded(true);
+    }, 12000);
     return () => {
       cancelled = true;
+      clearTimeout(fallback);
     };
   }, [drawFrame]);
 
-  // Scroll -> progress -> frame, throttled to animation frames.
+  // Scroll -> progress -> frame.
   useEffect(() => {
     const update = () => {
-      rafRef.current = null;
       const spacer = spacerRef.current;
       if (!spacer) return;
       const rect = spacer.getBoundingClientRect();
@@ -129,17 +135,17 @@ export default function WalkthroughPlayer() {
         drawFrame(idx);
       }
     };
-    const onScroll = () => {
-      if (rafRef.current == null) rafRef.current = requestAnimationFrame(update);
-    };
+    // Update directly on scroll — browsers already coalesce scroll events to
+    // frames, and the work (one rect read + a drawImage only when the frame
+    // index changes) is cheap. This avoids stalling if rAF is throttled
+    // (hidden tab, reduced-motion, background).
     sizeCanvas();
     update();
-    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("scroll", update, { passive: true });
     window.addEventListener("resize", sizeCanvas);
     return () => {
-      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", update);
       window.removeEventListener("resize", sizeCanvas);
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
   }, [drawFrame, sizeCanvas]);
 
@@ -168,8 +174,16 @@ export default function WalkthroughPlayer() {
     document.getElementById("enquire")?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
+  // Skip the cinematic scroll and jump straight to the site content.
+  const skipWalkthrough = useCallback(() => {
+    const el = document.getElementById("site-content");
+    if (el) el.scrollIntoView({ behavior: "smooth" });
+    else window.scrollTo({ top: window.innerHeight * 6, behavior: "smooth" });
+  }, []);
+
   const activeRoom = clamp(Math.round(progress * (ROOMS.length - 1)), 0, ROOMS.length - 1);
   const introOpacity = clamp(1 - progress / 0.07, 0, 1);
+  const closingOpacity = clamp((progress - 0.78) / 0.18, 0, 1);
   const uiVisible = progress < 0.999;
 
   return (
@@ -315,13 +329,29 @@ export default function WalkthroughPlayer() {
               style={{
                 fontFamily: "var(--font-body), sans-serif",
                 fontSize: "clamp(14px, 2vw, 17px)",
-                color: "var(--muted)",
+                color: "var(--text-body)",
                 fontWeight: 300,
-                marginBottom: 40,
-                maxWidth: 480,
+                marginBottom: 16,
+                maxWidth: 540,
+                lineHeight: 1.6,
               }}
             >
-              A fully finished luxury home. One continuous walk, room by room.
+              A fully finished luxury home — one continuous walk, no cuts.
+            </p>
+            <p
+              style={{
+                fontFamily: "var(--font-body), sans-serif",
+                fontSize: "clamp(13px, 1.7vw, 15px)",
+                color: "var(--muted)",
+                fontWeight: 300,
+                marginBottom: 38,
+                maxWidth: 540,
+                lineHeight: 1.7,
+              }}
+            >
+              Showcase your own work exactly like this. Send us your images and
+              our system stitches them together into one seamless cinematic
+              walkthrough.
             </p>
             <motion.div
               animate={{ y: [0, 10, 0] }}
@@ -337,6 +367,7 @@ export default function WalkthroughPlayer() {
                 flexDirection: "column",
                 alignItems: "center",
                 gap: 10,
+                marginBottom: 30,
               }}
             >
               Scroll to explore
@@ -344,6 +375,74 @@ export default function WalkthroughPlayer() {
                 <path d="M9 3v12M4 10l5 5 5-5" />
               </svg>
             </motion.div>
+            <button
+              onClick={skipWalkthrough}
+              style={{
+                pointerEvents: "auto",
+                fontFamily: "var(--font-body), sans-serif",
+                fontSize: 11,
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                color: "var(--gold)",
+                fontWeight: 500,
+                background: "transparent",
+                border: "1px solid var(--border-gold)",
+                padding: "0.75em 1.8em",
+                borderRadius: 2,
+                cursor: "pointer",
+              }}
+            >
+              Skip the walkthrough
+            </button>
+          </div>
+        )}
+
+        {/* Closing caption — fades in as the walk completes and the house
+            becomes the hero behind the site. */}
+        {loaded && closingOpacity > 0.01 && (
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: "32%",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              textAlign: "center",
+              padding: "0 24px",
+              opacity: closingOpacity,
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "var(--font-display), serif",
+                fontStyle: "italic",
+                fontWeight: 400,
+                fontSize: "clamp(30px, 5vw, 52px)",
+                lineHeight: 1.1,
+                color: "#F5F0E8",
+                marginBottom: 14,
+                textShadow: "0 2px 30px rgba(0,0,0,0.6)",
+              }}
+            >
+              Now picture your work here.
+            </div>
+            <p
+              style={{
+                fontFamily: "var(--font-body), sans-serif",
+                fontSize: "clamp(13px, 1.7vw, 15px)",
+                color: "var(--text-body)",
+                fontWeight: 300,
+                maxWidth: 460,
+                lineHeight: 1.7,
+                textShadow: "0 2px 20px rgba(0,0,0,0.6)",
+              }}
+            >
+              Your images, stitched into a cinematic walkthrough like this one —
+              built by IAS.
+            </p>
           </div>
         )}
 

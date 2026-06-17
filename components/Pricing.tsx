@@ -11,7 +11,7 @@ export default function Pricing() {
     <section
       id="pricing"
       style={{
-        background: "#0A0A0A",
+        background: "rgba(10,10,10,0.9)",
         padding: "clamp(90px, 12vh, 160px) clamp(20px, 6vw, 80px)",
       }}
     >

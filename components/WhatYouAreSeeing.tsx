@@ -29,8 +29,9 @@ export default function WhatYouAreSeeing() {
   return (
     <section
       style={{
-        background: "#0A0A0A",
-        padding: "clamp(90px, 12vh, 160px) clamp(20px, 6vw, 80px)",
+        background:
+          "linear-gradient(to bottom, rgba(10,10,10,0) 0%, rgba(10,10,10,0.45) 8%, rgba(10,10,10,0.86) 26%, rgba(10,10,10,0.92) 100%)",
+        padding: "clamp(140px, 22vh, 240px) clamp(20px, 6vw, 80px) clamp(90px, 12vh, 160px)",
       }}
     >
       <div style={{ maxWidth: 1100, margin: "0 auto", textAlign: "center" }}>

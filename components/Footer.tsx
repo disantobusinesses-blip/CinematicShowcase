@@ -4,7 +4,7 @@ export default function Footer() {
   return (
     <footer
       style={{
-        background: "#080808",
+        background: "rgba(8,8,8,0.94)",
         padding: "clamp(56px, 9vh, 96px) clamp(20px, 6vw, 80px)",
         textAlign: "center",
       }}

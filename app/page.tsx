@@ -14,8 +14,10 @@ export default function Home() {
       {/* Scroll-scrubbed cinematic walkthrough — provides its own scroll height */}
       <WalkthroughPlayer />
 
-      {/* Content layer scrolls up over the fixed walkthrough canvas */}
-      <div style={{ position: "relative", zIndex: 20, background: "#0A0A0A" }}>
+      {/* Content layer rises over the fixed walkthrough canvas. Backgrounds are
+          translucent so the house reads as a transparent hero behind the site
+          rather than a hard cut to a separate page. */}
+      <div id="site-content" style={{ position: "relative", zIndex: 20 }}>
         <WhatYouAreSeeing />
         <HowItWorks />
         <Pricing />

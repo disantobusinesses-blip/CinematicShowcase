@@ -30,7 +30,7 @@ export default function HowItWorks() {
     <section
       id="how-it-works"
       style={{
-        background: "#111111",
+        background: "rgba(17,17,17,0.9)",
         padding: "clamp(90px, 12vh, 160px) clamp(20px, 6vw, 80px)",
       }}
     >
